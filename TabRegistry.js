@@ -24,6 +24,7 @@ var TabRegistry = (function(undefined){
 	
 	// Private properties
 	var log = false,
+		manifest = {},
 		registry = {
 			current: {},		// A look up table of current registered tabs
 			removed: {},		// A look up table of tabs closed in the current session.
@@ -197,18 +198,22 @@ var TabRegistry = (function(undefined){
 		
 		if (log) console.info('Tab updated', JSON.parse(JSON.stringify(tab)));
 		
-		// Get real fingerprint and add or update
-		chrome.tabs.executeScript(tabId, {
-			code: "(function(){return JSON.stringify([location.href, document.referrer, history.length]);})()"
-		}, function(data){
-			// This will throw an error to the console, but chrome API won't let us catch it.
-			if (chrome.extension.lastError === undefined) {
-				addOrUpdateFingerprint(tabId, tab.index, data[0].hashCode());
-			} else {
-				addOrUpdateFingerprint(tabId, tab.index, tab.url.hashCode());
-			}
+		if (tab && tab.url && isUrlAllowed(tab.url)) {
 			
-		});	
+			// Get real fingerprint and add or update
+			chrome.tabs.executeScript(tabId, {
+				code: "(function(){return JSON.stringify([location.href, document.referrer, history.length]);})()"
+			}, function(data){
+				// This will throw an error to the console, but chrome API won't let us catch it.
+				if (chrome.extension.lastError === undefined) {
+					addOrUpdateFingerprint(tabId, tab.index, data[0].hashCode());
+				} else {
+					addOrUpdateFingerprint(tabId, tab.index, tab.url.hashCode());
+				}
+			});
+		} else if(log) {
+			console.info("Script execution in tab", tabId, "denied.");
+		}
 	}
 	
 	function onReplaced(addedId, removedId){
@@ -224,7 +229,7 @@ var TabRegistry = (function(undefined){
 
 		if (count) updateTabId(guids[0], addedId);
 	}
-	
+
 	function onRemoved(tabId, info) {
 		
 		// Timeout before removing from registry prevents registry being cleared
@@ -255,10 +260,39 @@ var TabRegistry = (function(undefined){
 		}, 100);
 		
 	}
-	
+
 	function onCreated(tab) {
 		onUpdatedOrLoad(tab.id, {}, tab);
 	}
+
+	// Load the extension's manifest
+	function loadManifest() {
+		manifest = chrome.runtime.getManifest();
+	}
+
+	function wildcardToRegex(str) {
+		if(!str) return str;
+		return new RegExp(str.replace(/\*/g, "[^ ]*"));
+	}
+
+	function isUrlAllowed(url) {
+		if(!url) return false;
+		var allowed = false;
+		if(manifest && manifest.permissions) {
+			(manifest.permissions || []).forEach(function(entry) {
+				if(entry.indexOf("://") > -1) {
+					var regex = wildcardToRegex(entry);
+					if(!allowed && regex.test(url)) {
+						allowed = true;
+					}
+				}
+			});
+		}
+		return allowed;
+	}
+
+	// Load the manifest
+	loadManifest();
 	
 	// Add the listeners
 	
